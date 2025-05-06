@@ -59,7 +59,7 @@ def new_job():
         POST: Redirect to employer dashboard on success
 
     Side Effects:
-        - Creates new Job record in database
+        - Creates new Job record in database using GraphQL
         - Handles company logo file upload
         - Logs creation attempts
         - Flashes success/error messages
@@ -83,9 +83,6 @@ def new_job():
                     f"Invalid salary format attempted: {form.salary.data}")
                 form.salary.data = '$' + form.salary.data
 
-            # Determine the poster_id
-            poster_id = session['user_id']
-
             # Handle logo upload
             company_logo = 'img/company_logos/default.png'  # Default logo
             if form.company_logo.data:
@@ -98,26 +95,36 @@ def new_job():
                     logger.error(
                         f"Failed to save company logo for new job")
 
-            # Create job
-            job = Job(
-                title=form.title.data,
-                company=form.company.data,
-                location=form.location.data,
-                description=form.description.data,
-                salary=form.salary.data,
-                category=form.category.data,
-                company_logo=company_logo,
-                poster_id=poster_id
-            )
-            db.session.add(job)
-            db.session.commit()
-            logger.info(
-                f"New job created: {job.id} - {job.title} at {job.company} by user {poster_id}")
-            flash('Job posted successfully!', 'success')
-            return redirect(url_for('employer.my_jobs'))
+            # Use GraphQL resolver directly instead of making a database operation
+            from graphql_api.resolvers.job_resolvers import resolve_create_job
+
+            # Prepare input for GraphQL mutation
+            job_input = {
+                "title": form.title.data,
+                "company": form.company.data,
+                "location": form.location.data,
+                "description": form.description.data,
+                "salary": form.salary.data,
+                "category": form.category.data,
+                "companyLogo": company_logo
+            }
+
+            # Call the GraphQL resolver directly
+            result = resolve_create_job(None, None, input=job_input)
+
+            if result.get("job"):
+                job = result["job"]
+                logger.info(
+                    f"New job created: {job.id} - {job.title} at {job.company} by user {session['user_id']} via GraphQL")
+                flash('Job posted successfully!', 'success')
+                return redirect(url_for('employer.my_jobs'))
+            else:
+                # Job creation failed
+                errors = result.get("errors", ["Unknown error"])
+                logger.error(f"Error creating job via GraphQL: {errors}")
+                flash(f'Error creating job: {", ".join(errors)}', 'danger')
 
         except Exception as e:
-            db.session.rollback()
             logger.error(f"Error creating job: {str(e)}")
             flash('An error occurred while posting the job.', 'danger')
 
@@ -134,16 +141,23 @@ def my_jobs():
 
     Side Effects:
         - Logs access to job list
-        - Retrieves jobs from database
+        - Retrieves jobs from database using GraphQL
 
     Example:
         /my_jobs
     """
     logger.info(f"User {session['user_id']} accessing their posted jobs")
-    jobs = Job.query.filter_by(poster_id=session['user_id']).all()
-    # Application count is already available as a property on the Job model
-    # No need to manually set it
-    logger.info(f"Found {len(jobs)} jobs posted by user {session['user_id']}")
+
+    # Use GraphQL resolver directly instead of making a database query
+    from graphql_api.resolvers.user_resolvers import resolve_user
+
+    # Get current user using the resolver directly
+    user = resolve_user(None, None, id=session['user_id'])
+
+    # Get jobs posted by the user
+    jobs = user.jobs_posted if user else []
+
+    logger.info(f"Found {len(jobs)} jobs posted by user {session['user_id']} via GraphQL")
     return render_template('my_jobs.html', jobs=jobs, form=JobForm())
 
 @employer_bp.route('/jobs/<int:job_id>/applications')
@@ -161,20 +175,35 @@ def job_applications(job_id):
     Side Effects:
         - Verifies job ownership (unless admin)
         - Logs access to applications
+        - Retrieves applications using GraphQL
 
     Example:
         /jobs/42/applications
     """
     logger.info(f"User {session['user_id']} accessing applications for job {job_id}")
-    job = db.get_or_404(Job, job_id)
+
+    # Use GraphQL resolvers directly instead of making database queries
+    from graphql_api.resolvers.job_resolvers import resolve_job
+    from graphql_api.resolvers.application_resolvers import resolve_job_applications
+
+    # Get job using the resolver directly
+    job = resolve_job(None, None, id=job_id)
+
+    if not job:
+        # If job not found, return 404
+        from flask import abort
+        abort(404)
+
     # Only allow access if user is admin or the job poster
     if session['role'] != 'admin' and job.poster_id != session['user_id']:
         logger.warning(f"Unauthorized access attempt: User {session['user_id']} tried to view applications for job {job_id} posted by user {job.poster_id}")
         flash('You do not have permission to view these applications.', 'danger')
         return redirect(url_for('employer.my_jobs'))
 
-    applications = Application.query.filter_by(job_id=job.id).all()
-    logger.info(f"Found {len(applications)} applications for job {job_id}")
+    # Get applications using the resolver directly
+    applications = resolve_job_applications(None, None, jobId=job_id)
+
+    logger.info(f"Found {len(applications)} applications for job {job_id} via GraphQL")
     return render_template('job_applications.html', job=job, applications=applications)
 
 @employer_bp.route('/jobs/<int:job_id>/delete', methods=['POST'])
@@ -190,14 +219,23 @@ def delete_job(job_id):
         redirect: Back to jobs list with success/error message
 
     Side Effects:
-        - Deletes job and all its applications
+        - Deletes job and all its applications using GraphQL
         - Logs deletion attempts
         - Flashes confirmation messages
 
     Example:
         POST /jobs/42/delete
     """
-    job = db.get_or_404(Job, job_id)
+    # Use GraphQL resolvers directly instead of making database queries
+    from graphql_api.resolvers.job_resolvers import resolve_job, resolve_delete_job
+
+    # Get job using the resolver directly
+    job = resolve_job(None, None, id=job_id)
+
+    if not job:
+        # If job not found, return 404
+        from flask import abort
+        abort(404)
 
     # Check if the user has permission to delete this job
     if session['role'] != 'admin' and job.poster_id != session['user_id']:
@@ -207,19 +245,19 @@ def delete_job(job_id):
         return redirect(url_for('employer.my_jobs'))
 
     try:
-        # Delete associated applications first
-        applications = Application.query.filter_by(job_id=job.id).all()
-        for application in applications:
-            db.session.delete(application)
+        # Delete the job using GraphQL mutation
+        result = resolve_delete_job(None, None, id=job_id)
 
-        # Now delete the job
-        db.session.delete(job)
-        db.session.commit()
-        logger.info(
-            f"Job {job_id} ({job.title} at {job.company}) deleted by user {session['user_id']}")
-        flash('Job deleted successfully!', 'success')
+        if result.get('success'):
+            logger.info(
+                f"Job {job_id} ({job.title} at {job.company}) deleted by user {session['user_id']} via GraphQL")
+            flash('Job deleted successfully!', 'success')
+        else:
+            # Job deletion failed
+            errors = result.get('errors', ['Unknown error'])
+            logger.error(f"Error deleting job {job_id} via GraphQL: {errors}")
+            flash(f'Error deleting job: {", ".join(errors)}', 'danger')
     except Exception as e:
-        db.session.rollback()
         logger.error(f"Error deleting job {job_id}: {str(e)}")
         flash('An error occurred while deleting the job.', 'danger')
 
@@ -238,7 +276,7 @@ def update_application(application_id):
         redirect: Back to applications page with success/error message
 
     Side Effects:
-        - Updates application in database
+        - Updates application in database using GraphQL
         - Logs update attempts
         - Flashes success/error messages
 
@@ -253,8 +291,25 @@ def update_application(application_id):
         POST /applications/42/update
         Form Data: {'status': 'shortlisted', 'notes': 'Strong candidate'}
     """
-    application = db.get_or_404(Application, application_id)
-    job = db.get_or_404(Job, application.job_id)
+    # Use GraphQL resolvers directly instead of making database queries
+    from graphql_api.resolvers.application_resolvers import resolve_application, resolve_update_application_status
+    from graphql_api.resolvers.job_resolvers import resolve_job
+
+    # Get application using the resolver directly
+    application = resolve_application(None, None, id=application_id)
+
+    if not application:
+        # If application not found, return 404
+        from flask import abort
+        abort(404)
+
+    # Get job using the resolver directly
+    job = resolve_job(None, None, id=application.job_id)
+
+    if not job:
+        # If job not found, return 404
+        from flask import abort
+        abort(404)
 
     # Security check: Ensure the employer owns this job or is an admin
     if session['role'] != 'admin' and job.poster_id != session['user_id']:
@@ -271,11 +326,20 @@ def update_application(application_id):
         flash('Invalid status.', 'danger')
         return redirect(url_for('employer.job_applications', job_id=job.id))
 
-    # Update the application status
-    application.status = new_status
-    db.session.commit()
+    try:
+        # Update the application status using GraphQL mutation
+        result = resolve_update_application_status(None, None, id=application_id, status=new_status)
 
-    logger.info(f"Employer {session['user_id']} updated application {application_id} status to {new_status}")
-    flash(f'Application status updated to {new_status}.', 'success')
+        if result.get('application'):
+            logger.info(f"Employer {session['user_id']} updated application {application_id} status to {new_status} via GraphQL")
+            flash(f'Application status updated to {new_status}.', 'success')
+        else:
+            # Application update failed
+            errors = result.get('errors', ['Unknown error'])
+            logger.error(f"Error updating application {application_id} via GraphQL: {errors}")
+            flash(f'Error updating application: {", ".join(errors)}', 'danger')
+    except Exception as e:
+        logger.error(f"Error updating application {application_id}: {str(e)}")
+        flash('An error occurred while updating the application.', 'danger')
 
     return redirect(url_for('employer.job_applications', job_id=job.id))

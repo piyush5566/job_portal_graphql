@@ -11,105 +11,70 @@ def jobs_list():
     location = request.args.get('location')
     category = request.args.get('category')
     company = request.args.get('company')
-    
+
     logger.info(f"Jobs page accessed with filters - location: {location}, category: {category}, company: {company}")
-    
-    query = Job.query
-    if location:
-        query = query.filter(Job.location.ilike(f'%{location}%'))
-    if category:
-        query = query.filter(Job.category.ilike(f'%{category}%'))
-    if company:
-        query = query.filter(Job.company.ilike(f'%{company}%'))
-    jobs = query.all()
-    
-    logger.info(f"Found {len(jobs)} jobs matching the criteria")
+
+    # Use GraphQL resolver directly instead of making an HTTP request
+    from graphql_api.resolvers.job_resolvers import resolve_jobs
+    from ariadne import graphql_sync
+    from graphql_api.schema import type_defs
+    from graphql_api.resolvers import resolvers
+    from ariadne import make_executable_schema
+
+    # Get jobs using the resolver directly
+    jobs = resolve_jobs(None, None, location=location, category=category, company=company)
+
+    logger.info(f"Found {len(jobs)} jobs matching the criteria via GraphQL resolver")
     return render_template('jobs.html', jobs=jobs)
 
-@jobs_bp.route('/search')
-def search_jobs():
-    """
-    API endpoint for searching jobs (returns JSON).
-    
-    Query Parameters:
-        location (optional): Filter by location
-        category (optional): Filter by category
-        company (optional): Filter by company
-        
-    Returns:
-        JSON response with job listings matching criteria
-        
-    Side Effects:
-        - Logs search parameters
-        - Logs number of results returned
-        
-    Example:
-        /jobs/search?location=New+York
-    """
-    location = request.args.get('location')
-    category = request.args.get('category')
-    company = request.args.get('company')
-
-    logger.info(f"API search_jobs called with filters - location: {location}, category: {category}, company: {company}")
-
-    query = Job.query
-
-    if location:
-        query = query.filter(Job.location.ilike(f'%{location}%'))
-    if category:
-        query = query.filter(Job.category.ilike(f'%{category}%'))
-    if company:
-        query = query.filter(Job.company.ilike(f'%{company}%'))
-
-    jobs = query.all()
-    logger.info(f"API search_jobs returned {len(jobs)} results")
-
-    return jsonify({
-        'jobs': [{
-            'id': job.id,
-            'title': job.title,
-            'company': job.company,
-            'location': job.location,
-            'category': job.category,
-            'salary': job.salary,
-            'company_logo': job.company_logo,
-            'posted_date': job.posted_date.isoformat()
-        } for job in jobs]
-    })
+# REST API endpoint for job search has been replaced with GraphQL
+# Frontend now uses the GraphQL API endpoint at /graphql
+# See static/js/search.js for the implementation
+# and graphql_api/resolvers/job_resolvers.py for the resolver
 
 @jobs_bp.route('/<int:job_id>')
 def job_detail(job_id):
     """
     Display detailed information about a specific job.
-    
+
     Args:
         job_id: ID of the job to display
-        
+
     Returns:
         Rendered template with job details
-        
+
     Side Effects:
         - Logs job detail page access
         - For admin users, logs application count
         - For job seekers, checks and logs application status
-        
+
     Example:
         /jobs/42
     """
     logger.info(f"Job detail page accessed for job_id: {job_id}")
-    job = db.get_or_404(Job, job_id)
-    # Add application count for admin users
+
+    # Use GraphQL resolver directly instead of making a database query
+    from graphql_api.resolvers.job_resolvers import resolve_job
+
+    # Get job using the resolver directly
+    job = resolve_job(None, None, id=job_id)
+
+    if not job:
+        # If job not found, return 404
+        from flask import abort
+        abort(404)
+
+    # Log application count for admin users
     if session.get('role') == 'admin':
-        job.application_count = Application.query.filter_by(
-            job_id=job.id).count()
-        logger.info(f"Admin viewing job {job_id} with {job.application_count} applications")
+        logger.info(f"Admin viewing job {job_id} with {len(job.applications)} applications")
 
     # Check if the current user has already applied
     has_applied = False
     if session.get('user_id') and session.get('role') == 'job_seeker':
-        existing_application = Application.query.filter_by(
-            job_id=job_id, applicant_id=session['user_id']).first()
-        has_applied = existing_application is not None
+        # Use GraphQL resolver to check if user has applied
+        from graphql_api.resolvers.application_resolvers import resolve_my_applications
+        my_applications = resolve_my_applications(None, None)
+        has_applied = any(app.job_id == int(job_id) for app in my_applications)
         logger.info(f"User {session['user_id']} has {'already applied' if has_applied else 'not applied'} to job {job_id}")
 
     return render_template('job_detail.html', job=job, has_applied=has_applied)
@@ -120,30 +85,42 @@ def job_detail(job_id):
 def apply_job(job_id):
     """
     Handle job application submissions.
-    
+
     Args:
         job_id: ID of the job being applied to
-        
+
     Returns:
         Rendered form (GET) or redirect (POST)
-        
+
     Side Effects:
         - Validates and saves resume file
         - Creates application record
         - Prevents duplicate applications
         - Logs application attempts and results
         - Flashes success/error messages
-        
+
     Example:
         /jobs/apply/42
     """
-    job = db.get_or_404(Job, job_id)
+    # Use GraphQL resolver directly instead of making a database query
+    from graphql_api.resolvers.job_resolvers import resolve_job
+    from graphql_api.resolvers.application_resolvers import resolve_create_application, resolve_my_applications
+
+    # Get job using the resolver directly
+    job = resolve_job(None, None, id=job_id)
+
+    if not job:
+        # If job not found, return 404
+        from flask import abort
+        abort(404)
+
     form = ApplicationForm()
 
-    # Check if already applied
-    existing_application = Application.query.filter_by(
-        job_id=job_id, applicant_id=session['user_id']).first()
-    if existing_application:
+    # Check if already applied using GraphQL resolver
+    my_applications = resolve_my_applications(None, None)
+    already_applied = any(app.job_id == int(job_id) for app in my_applications)
+
+    if already_applied:
         flash('You have already applied to this job.', 'warning')
         return redirect(url_for('jobs.job_detail', job_id=job_id))
 
@@ -175,40 +152,38 @@ def apply_job(job_id):
                         gcs_upload_successful = False
                         logger.error(f"GCS upload failed for job {job_id}, user {session['user_id']}")
                         flash('There was an error uploading your resume to cloud storage. Please try again.', 'danger')
-                        # Optionally, save locally as a fallback ONLY IF GCS fails?
-                        # Or just fail the application? Let's fail for now.
-                        # return render_template('apply_job.html', form=form, job=job) # Stay on page
                 else:
-                    # GCS not enabled, handle locally (or disallow?)
-                    # For now, let's log a warning and not save the resume if GCS isn't enabled
                     logger.warning(f"Resume provided for job {job_id}, user {session['user_id']}, but GCS upload is disabled or bucket not configured. Resume not saved.")
-                    # Optionally flash a message to the user
-                    # flash('Resume upload is currently disabled.', 'info')
-                    # resume_path_for_db = None # Explicitly set to None
 
-            # --- Create Application Record (only if GCS upload was successful or no resume) ---
+            # --- Create Application Record using GraphQL mutation (only if GCS upload was successful or no resume) ---
             if gcs_upload_successful:
-                application = Application(
-                    job_id=job_id,
-                    applicant_id=session['user_id'],
-                    resume_path=resume_path_for_db, # Store GCS path or None
-                    status='applied' # Changed from 'pending' to 'applied'
-                )
-                db.session.add(application)
-                db.session.commit()
-                logger.info(f"User {session['user_id']} successfully applied to job {job_id}. Resume path (GCS): {resume_path_for_db}")
-                flash('Your application has been submitted!', 'success')
-                return redirect(url_for('job_seeker.my_applications'))
+                # Prepare input for GraphQL mutation
+                application_input = {
+                    "jobId": str(job_id),
+                    "resumePath": resume_path_for_db
+                }
+
+                # Call the GraphQL resolver directly
+                result = resolve_create_application(None, None, input=application_input)
+
+                if result.get("application"):
+                    logger.info(f"User {session['user_id']} successfully applied to job {job_id} via GraphQL. Resume path: {resume_path_for_db}")
+                    flash('Your application has been submitted!', 'success')
+                    return redirect(url_for('job_seeker.my_applications'))
+                else:
+                    # Application creation failed
+                    errors = result.get("errors", ["Unknown error"])
+                    logger.error(f"Error creating application via GraphQL: {errors}")
+                    flash(f'Error submitting application: {", ".join(errors)}', 'danger')
             # else: GCS upload failed, already flashed message, stay on page
 
         except Exception as e:
-            db.session.rollback()
             logger.error(f"Error processing application for job {job_id}, user {session['user_id']}: {str(e)}")
             flash('An unexpected error occurred while submitting your application.', 'danger')
-            
+
     elif request.method == 'POST':
         # Log validation errors if POST request failed validation
         logger.warning(f"Application form validation failed for job {job_id}, user {session['user_id']}: {form.errors}")
         flash('Please correct the errors in the form.', 'warning')
-        
+
     return render_template('apply_job.html', form=form, job=job)

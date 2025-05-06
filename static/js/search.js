@@ -1,20 +1,49 @@
 function handleSearch(event) {
     event.preventDefault();
-    
+
     const company = document.getElementById('company').value;
     const category = document.getElementById('category').value;
     const location = document.getElementById('location').value;
-    
+
     // Show loading state
     const resultsContainer = document.getElementById('resultsContainer');
     resultsContainer.innerHTML = '<div class="text-center"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>';
     document.getElementById('searchResults').style.display = 'block';
 
-    // Make AJAX request
-    fetch(`/jobs/search?company=${encodeURIComponent(company)}&category=${encodeURIComponent(category)}&location=${encodeURIComponent(location)}`)
+    // Make GraphQL request
+    const graphqlQuery = {
+        query: `
+            query SearchJobs($location: String, $category: String, $company: String) {
+                jobs(location: $location, category: $category, company: $company) {
+                    id
+                    title
+                    company
+                    location
+                    category
+                    salary
+                    companyLogo
+                    postedDate
+                }
+            }
+        `,
+        variables: {
+            location: location || null,
+            category: category || null,
+            company: company || null
+        }
+    };
+
+    fetch('/graphql', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(graphqlQuery)
+    })
         .then(response => response.json())
-        .then(data => {
-            if (data.jobs.length === 0) {
+        .then(result => {
+            const data = result.data;
+            if (!data || !data.jobs || data.jobs.length === 0) {
                 resultsContainer.innerHTML = '<div class="text-center">No jobs found matching your criteria.</div>';
                 return;
             }
@@ -25,7 +54,7 @@ function handleSearch(event) {
                     <div class="row g-4">
                         <div class="col-sm-12 col-md-8 d-flex align-items-center">
                             <img class="flex-shrink-0 img-fluid border rounded" 
-                                src="/static/${job.company_logo}" 
+                                src="/static/${job.companyLogo}" 
                                 alt="${job.company} logo"
                                 style="width: 80px; height: 80px; object-fit: cover;">
                             <div class="text-start ps-4">
@@ -39,12 +68,12 @@ function handleSearch(event) {
                             <div class="d-flex mb-3">
                                 <a class="btn btn-primary" href="/jobs/${job.id}">View Details</a>
                             </div>
-                            <small class="text-truncate"><i class="far fa-calendar-alt text-primary me-2"></i>Posted: ${new Date(job.posted_date).toLocaleDateString()}</small>
+                            <small class="text-truncate"><i class="far fa-calendar-alt text-primary me-2"></i>Posted: ${new Date(job.postedDate).toLocaleDateString()}</small>
                         </div>
                     </div>
                 </div>
             `).join('');
-            
+
             resultsContainer.innerHTML = jobsHtml;
         })
         .catch(error => {

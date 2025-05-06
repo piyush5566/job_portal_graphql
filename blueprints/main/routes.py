@@ -20,27 +20,34 @@ main = Blueprint('main', __name__)
 @main.route('/')
 def index():
     """Display the application home page with featured jobs and categories.
-    
+
     Returns:
         rendered_template: Home page with:
             - Featured jobs (5 most recent)
             - Job category counts
             - Statistics
-            
+
     Side Effects:
         - Logs home page access
-        - Queries database for jobs and categories
-        
+        - Queries database for jobs and categories using GraphQL
+
     Example:
         /
     """
     logger.info("Home page accessed")
-    # Get featured jobs (most recent jobs)
-    featured_jobs = Job.query.order_by(Job.posted_date.desc()).limit(5).all()
+
+    # Use GraphQL resolver directly instead of making a database query
+    from graphql_api.resolvers.job_resolvers import resolve_jobs
+
+    # Get all jobs using the resolver directly
+    jobs = resolve_jobs(None, None)
+
+    # Sort jobs by posted_date (descending) and limit to 5 for featured jobs
+    # Note: In a production app with many jobs, you would want to add sorting/limiting to the GraphQL query
+    featured_jobs = sorted(jobs, key=lambda job: job.posted_date, reverse=True)[:5]
 
     # Count jobs by category
     job_categories = {}
-    jobs = Job.query.all()
     for job in jobs:
         if job.category in job_categories:
             job_categories[job.category] += 1
@@ -50,6 +57,7 @@ def index():
     # Sort categories by count (descending)
     sorted_categories = sorted(job_categories.items(), key=lambda x: x[1], reverse=True)
 
+    logger.info(f"Retrieved {len(jobs)} jobs and {len(job_categories)} categories via GraphQL")
     return render_template('index.html', featured_jobs=featured_jobs, job_categories=sorted_categories)
 
 @main.route('/about')
@@ -70,20 +78,20 @@ def terms():
 @main.route('/contact', methods=['GET', 'POST'])
 def contact():
     """Handle contact form submissions.
-    
+
     Methods:
         GET: Display contact form
         POST: Process form submission and send email
-        
+
     Returns:
         GET: Rendered contact form template
         POST: Redirect to home page with success message
-        
+
     Side Effects:
         - Sends email to configured contact address
         - Logs contact attempts
         - Flashes success/error messages
-        
+
     Example:
         POST /contact
         Form Data: {'name': 'John', 'email': 'john@example.com', 'message': 'Hello'}
@@ -105,7 +113,7 @@ def contact():
                 recipients=[os.getenv('CONTACT_EMAIL_RECIPIENT')],
                 body=f"From: {name} <{email}>\n\n{message_body}"
             )
-            
+
             # Add retry logic for email sending
             max_retries = 3
             for attempt in range(max_retries):
@@ -122,7 +130,7 @@ def contact():
                         logger.warning(f"Email send attempt {attempt + 1} failed, retrying...")
                         time.sleep(1)  # Wait before retrying
                         continue
-            
+
             return redirect(url_for('main.contact'))
         except Exception as e:
             logger.error(f"Failed to send contact email from {email}: {str(e)}")
@@ -131,5 +139,5 @@ def contact():
     # Log form validation errors
     if form.errors:
         logger.warning(f"Contact form validation failed: {form.errors}")
-        
+
     return render_template('contact.html', form=form)
