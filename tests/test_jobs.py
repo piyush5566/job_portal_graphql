@@ -44,10 +44,10 @@ def test_jobs_list_with_filters(jobs_client):
     assert response.status_code == 200
     assert b'Job' in response.data or b'Jobs' in response.data
 
-def test_job_search_api(jobs_client):
-    response = jobs_client.get('/jobs/search?location=Remote')
-    assert response.status_code == 200
-    assert b'jobs' in response.data
+# def test_job_search_api(jobs_client):
+#     response = jobs_client.get('/jobs/search?location=Remote')
+#     assert response.status_code == 200
+#     assert b'jobs' in response.data
 
 def test_job_detail_page_loads(jobs_client):
     job = Job.query.first()

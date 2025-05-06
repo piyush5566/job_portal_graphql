@@ -69,7 +69,7 @@ Live Deployment: https://jobportal-production-fcd5.up.railway.app
 
 4.  Activate the Poetry virtual environment:
     ```bash
-    poetry shell
+    poetry env activate
     ```
 
 5.  Create a `.env` file in the project root based on `.env.example` (if provided) or the structure below:
