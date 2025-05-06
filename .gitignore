@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+.env
+.idea
+static/resumes
+logs
+jobportal.db
+# Coverage files
+.coverage
+.coverage.*
+coverage.xml # If you generate XML reports
+htmlcov/     # If you generate HTML reports
+
+# Celery files
+celerybeat-schedule
+celerybeat.pid
+
+*.Identifier
+
+# Poetry
+poetry.lock
+.pytest_cache/
+dist/
