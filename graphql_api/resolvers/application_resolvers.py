@@ -8,10 +8,9 @@ This module contains resolver functions for Application-related GraphQL operatio
 """
 
 from ariadne import QueryType, MutationType, ObjectType
-from flask import session, current_app
+from flask import session
 from models import Application, Job, User, db
 from datetime import datetime, timezone
-from utils import upload_to_gcs
 
 # Initialize types
 query = QueryType()

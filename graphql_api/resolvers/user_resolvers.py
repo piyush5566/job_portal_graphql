@@ -8,9 +8,7 @@ This module contains resolver functions for User-related GraphQL operations:
 """
 
 from ariadne import QueryType, MutationType, ObjectType
-from flask import session
 from models import User, db
-from extensions import bcrypt
 
 # Initialize types
 query = QueryType()
